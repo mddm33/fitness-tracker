@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 
-// ── CONSTANTS ────────────────────────────────────────────────────────────────
 const PROGRAM_DAYS = {
   push: {
     label: "Push", fullLabel: "Day 1 — Push", accent: "#2563eb",
@@ -41,26 +40,20 @@ const PROGRAM_DAYS = {
 };
 
 function getWeeks(count) { return Array.from({ length: count }, (_, i) => `Week ${i + 1}`); }
-const STORAGE_KEY = "wfit-v4";
-const PROTEIN_TARGET = 190;
-const CALORIE_TARGET = 2200;
-const WATER_TARGET = 128;
-
+const STORAGE_KEY = "wfit-v5";
+const ACCENT_POOL = ["#7c3aed","#db2777","#0891b2","#ea580c","#65a30d","#0d9488","#b45309"];
 const S = {
   dark: "#0f0f1a", mid: "#1a1a2e", card: "rgba(255,255,255,0.04)",
   border: "#2d2d5e", muted: "#8888aa", text: "#e8e8f0",
   accent: "#4f46e5", accentLight: "#a5b4fc", green: "#16a34a",
 };
 
-const ACCENT_POOL = ["#7c3aed","#db2777","#0891b2","#ea580c","#65a30d","#0d9488","#b45309"];
-
-function todayStr() { return new Date().toISOString().slice(0,10); }
 function load() {
   try { const r = localStorage.getItem(STORAGE_KEY); return r ? JSON.parse(r) : defaultData(); }
   catch { return defaultData(); }
 }
 function defaultData() {
-  return { weightLog:{}, workoutLog:{}, dietLog:{}, extraDays:[], measurements:{}, checkIns:{}, favoriteFoods:[] };
+  return { weightLog:{}, workoutLog:{}, extraDays:[], measurements:{}, checkIns:{} };
 }
 function persist(data) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {} }
 
@@ -98,195 +91,45 @@ function Textarea({ value, onChange, placeholder, rows=3 }) {
     }} />
   );
 }
-function MacroBar({ label, value, target, color, unit }) {
-  const pct = Math.min((value/target)*100,100);
-  const over = value > target;
+
+// Reusable set logger: shows lbs + actual reps per set
+function SetLogger({ exId, setCount, targetReps, weights, onWeight, onReps, accent }) {
   return (
-    <div style={{ marginBottom:10 }}>
-      <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:4 }}>
-        <span style={{ color:S.muted }}>{label}</span>
-        <span style={{ color: over?"#ef4444":S.text, fontWeight:"bold" }}>
-          {Math.round(value)}<span style={{ color:S.muted, fontWeight:"normal" }}>/{target}{unit}</span>
-        </span>
-      </div>
-      <div style={{ background:"#1e1e3a", borderRadius:6, height:9, overflow:"hidden" }}>
-        <div style={{ width:`${pct}%`, height:"100%", background: over?"#ef4444":color, borderRadius:6, transition:"width 0.4s" }} />
-      </div>
+    <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+      {Array.from({ length: setCount }, (_, i) => (
+        <div key={i} style={{ textAlign:"center" }}>
+          <div style={{ fontSize:10, color:S.muted, marginBottom:4 }}>
+            Set {i+1}{targetReps ? ` · ${Array.isArray(targetReps) ? targetReps[i] : targetReps}r` : ""}
+          </div>
+          <input
+            type="number" placeholder="lbs"
+            value={weights[`${exId}-${i}`] || ""}
+            onChange={e => onWeight(exId, i, e.target.value)}
+            style={{
+              display:"block", width:58, textAlign:"center", padding:"7px 4px",
+              background:S.dark, border:`1px solid ${weights[`${exId}-${i}`] ? (accent||"#6366f1") : S.border}`,
+              color:S.text, borderRadius:8, fontSize:13, fontFamily:"Georgia,serif",
+              outline:"none", marginBottom:4,
+            }}
+          />
+          <input
+            type="number" placeholder="reps"
+            value={weights[`${exId}-${i}-reps`] || ""}
+            onChange={e => onReps(exId, i, e.target.value)}
+            style={{
+              display:"block", width:58, textAlign:"center", padding:"5px 4px",
+              background:S.dark, border:`1px solid ${weights[`${exId}-${i}-reps`] ? "#6366f1" : S.border}`,
+              color:S.muted, borderRadius:8, fontSize:11, fontFamily:"Georgia,serif",
+              outline:"none",
+            }}
+          />
+        </div>
+      ))}
     </div>
   );
 }
 
-function DietTab({ data, setData }) {
-  const [date, setDate] = useState(todayStr());
-  const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [suggestions, setSuggestions] = useState([]);
-  const [error, setError] = useState("");
-  const [showFavs, setShowFavs] = useState(false);
-
-  const dietDay = data.dietLog?.[date] || { meals:[], water:0 };
-  const meals = dietDay.meals || [];
-  const waterOz = dietDay.water || 0;
-  const favs = data.favoriteFoods || [];
-
-  function updateDay(updated) {
-    const newData = { ...data, dietLog:{ ...data.dietLog, [date]: updated } };
-    setData(newData); persist(newData);
-  }
-  function setMeals(m) { updateDay({ ...dietDay, meals:m }); }
-  function setWaterOz(w) { updateDay({ ...dietDay, water:w }); }
-
-  async function lookupFood() {
-    if (!query.trim()) return;
-    setLoading(true); setError(""); setSuggestions([]);
-    try {
-      const prompt = `User wants to log: "${query}"\nReturn ONLY a JSON array of 1-3 serving options. Each: {"name":string,"serving":string,"calories":number,"protein":number,"carbs":number,"fat":number}. Use accurate USDA nutrition data. No markdown, no explanation.`;
-      const res = await fetch("/api/claude",{
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ max_tokens:800, messages:[{role:"user",content:prompt}] })
-      });
-      const result = await res.json();
-      const text = result.content?.map(c=>c.text||"").join("")||"[]";
-      setSuggestions(JSON.parse(text.replace(/```json|```/g,"").trim()));
-    } catch { setError("Couldn't look up that food. Try being more specific."); }
-    setLoading(false);
-  }
-
-  function addMeal(item) {
-    const meal = { ...item, id:Date.now() };
-    setMeals([...meals, meal]);
-    if (!favs.find(f => f.name===item.name && f.serving===item.serving)) {
-      const newData = { ...data, favoriteFoods:[...favs, item], dietLog:{ ...data.dietLog, [date]:{ ...dietDay, meals:[...meals, meal] } } };
-      setData(newData); persist(newData);
-    }
-    setSuggestions([]); setQuery("");
-  }
-
-  function addFav(fav) { setMeals([...meals, { ...fav, id:Date.now() }]); }
-  function removeFav(idx) {
-    const newFavs = favs.filter((_,i)=>i!==idx);
-    const newData = { ...data, favoriteFoods:newFavs };
-    setData(newData); persist(newData);
-  }
-  function removeMeal(id) { setMeals(meals.filter(m=>m.id!==id)); }
-
-  const totals = meals.reduce((a,m)=>({ calories:a.calories+(m.calories||0), protein:a.protein+(m.protein||0), carbs:a.carbs+(m.carbs||0), fat:a.fat+(m.fat||0) }), {calories:0,protein:0,carbs:0,fat:0});
-  const waterPct = Math.min((waterOz/WATER_TARGET)*100,100);
-
-  function shiftDate(days) {
-    const d = new Date(date); d.setDate(d.getDate()+days);
-    setDate(d.toISOString().slice(0,10)); setSuggestions([]);
-  }
-
-  return (
-    <div>
-      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14 }}>
-        <Btn small onClick={()=>shiftDate(-1)}>← Prev</Btn>
-        <Inp type="date" value={date} onChange={e=>{setDate(e.target.value);setSuggestions([]);}} style={{ fontSize:12, padding:"6px 10px" }} />
-        <Btn small onClick={()=>shiftDate(1)} disabled={date>=todayStr()}>Next →</Btn>
-        {date===todayStr() && <span style={{ fontSize:11, color:S.green }}>Today</span>}
-      </div>
-      <Card>
-        <Label>Daily Totals</Label>
-        <MacroBar label="Calories" value={totals.calories} target={CALORIE_TARGET} color="#f59e0b" unit=" kcal" />
-        <MacroBar label="Protein" value={totals.protein} target={PROTEIN_TARGET} color={S.accent} unit="g" />
-        <MacroBar label="Carbs" value={totals.carbs} target={250} color="#10b981" unit="g" />
-        <MacroBar label="Fat" value={totals.fat} target={70} color="#f97316" unit="g" />
-      </Card>
-      <Card>
-        <Label>Water Intake</Label>
-        <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
-          <Btn small color="#0891b2" onClick={()=>setWaterOz(Math.max(0,waterOz-8))}>−8 oz</Btn>
-          <div style={{ flex:1 }}>
-            <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:4 }}>
-              <span style={{ color:S.muted }}>Ounces</span>
-              <span style={{ color: waterOz>=WATER_TARGET?"#10b981":S.text, fontWeight:"bold" }}>{waterOz}<span style={{ color:S.muted, fontWeight:"normal" }}>/{WATER_TARGET} oz</span></span>
-            </div>
-            <div style={{ background:"#1e1e3a", borderRadius:6, height:9 }}>
-              <div style={{ width:`${waterPct}%`, height:"100%", background:"#0891b2", borderRadius:6, transition:"width 0.3s" }} />
-            </div>
-          </div>
-          <Btn small color="#0891b2" onClick={()=>setWaterOz(waterOz+8)}>+8 oz</Btn>
-        </div>
-        <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-          {[16,20,32].map(oz=>(
-            <Btn key={oz} small color="#0c4a6e" onClick={()=>setWaterOz(waterOz+oz)}>+{oz} oz</Btn>
-          ))}
-          <Btn small color="#374151" onClick={()=>setWaterOz(0)}>Reset</Btn>
-        </div>
-      </Card>
-      <Card>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
-          <Label style={{ marginBottom:0 }}>Add Food</Label>
-          {favs.length>0 && <button onClick={()=>setShowFavs(!showFavs)} style={{ background:"none", border:"none", color:S.accentLight, fontSize:12, cursor:"pointer" }}>{showFavs?"Hide":"⭐ Favorites"}</button>}
-        </div>
-        {showFavs && favs.length>0 && (
-          <div style={{ marginBottom:12 }}>
-            <div style={{ fontSize:11, color:S.muted, marginBottom:6 }}>Tap to add instantly:</div>
-            {favs.map((f,i)=>(
-              <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", background:"#1e1e3a", borderRadius:8, padding:"8px 12px", marginBottom:6, cursor:"pointer" }} onClick={()=>addFav(f)}>
-                <div>
-                  <span style={{ fontSize:13, color:S.text, fontWeight:"bold" }}>{f.name}</span>
-                  <span style={{ fontSize:11, color:S.muted }}> — {f.serving}</span>
-                </div>
-                <div style={{ display:"flex", gap:10, alignItems:"center" }}>
-                  <span style={{ fontSize:11, color:"#f59e0b" }}>{f.calories} kcal</span>
-                  <span style={{ fontSize:11, color:S.accentLight }}>{f.protein}g P</span>
-                  <button onClick={e=>{e.stopPropagation();removeFav(i);}} style={{ background:"none", border:"none", color:"#ef4444", fontSize:15, cursor:"pointer" }}>×</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-        <p style={{ fontSize:11, color:S.muted, margin:"0 0 8px", lineHeight:1.5 }}>Just describe it — "2 scrambled eggs", "grande latte", "6oz salmon", "handful almonds"</p>
-        <div style={{ display:"flex", gap:8, marginBottom:8 }}>
-          <Inp value={query} onChange={e=>setQuery(e.target.value)} placeholder='e.g. "protein shake with milk"' style={{ flex:1 }} onKeyDown={e=>e.key==="Enter"&&lookupFood()} />
-          <Btn onClick={lookupFood} disabled={loading} color={S.green}>{loading?"...":"Look Up"}</Btn>
-        </div>
-        {error && <div style={{ fontSize:12, color:"#ef4444" }}>{error}</div>}
-        {suggestions.length>0 && (
-          <div style={{ marginTop:8 }}>
-            <div style={{ fontSize:11, color:S.muted, marginBottom:6 }}>Select a serving:</div>
-            {suggestions.map((s,i)=>(
-              <div key={i} onClick={()=>addMeal(s)} style={{ background:"#1e1e3a", borderRadius:9, padding:"10px 13px", marginBottom:7, border:`1px solid ${S.border}`, cursor:"pointer" }}
-                onMouseEnter={e=>e.currentTarget.style.borderColor=S.accent}
-                onMouseLeave={e=>e.currentTarget.style.borderColor=S.border}>
-                <div style={{ fontSize:13, fontWeight:"bold", color:S.text, marginBottom:3 }}>
-                  {s.name} <span style={{ fontSize:11, color:S.muted, fontWeight:"normal" }}>— {s.serving}</span>
-                </div>
-                <div style={{ display:"flex", gap:10, fontSize:11, flexWrap:"wrap" }}>
-                  <span style={{ color:"#f59e0b" }}>{s.calories} kcal</span>
-                  <span style={{ color:S.accentLight }}>{s.protein}g protein</span>
-                  <span style={{ color:"#10b981" }}>{s.carbs}g carbs</span>
-                  <span style={{ color:"#f97316" }}>{s.fat}g fat</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-      {meals.length>0 && (
-        <Card>
-          <Label>Food Log — {date}</Label>
-          {meals.map(m=>(
-            <div key={m.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:`1px solid ${S.border}` }}>
-              <div>
-                <div style={{ fontSize:13, color:S.text, fontWeight:"bold" }}>{m.name}</div>
-                <div style={{ fontSize:11, color:S.muted, marginTop:2 }}>{m.serving} · {m.calories} kcal · {m.protein}g P · {m.carbs}g C · {m.fat}g F</div>
-              </div>
-              <button onClick={()=>removeMeal(m.id)} style={{ background:"none", border:"none", color:"#ef4444", fontSize:20, cursor:"pointer", padding:"0 4px" }}>×</button>
-            </div>
-          ))}
-          <div style={{ paddingTop:10, display:"flex", justifyContent:"space-between", fontSize:13, fontWeight:"bold" }}>
-            <span style={{ color:S.muted }}>Total</span>
-            <span>{Math.round(totals.calories)} kcal · {Math.round(totals.protein)}g protein</span>
-          </div>
-        </Card>
-      )}
-    </div>
-  );
-}
-
+// ── PROGRAM DAY ───────────────────────────────────────────────────────────────
 function ProgramDayTab({ dayKey, week, data, setData, weeks }) {
   const day = PROGRAM_DAYS[dayKey];
   const logKey = `${week}-${dayKey}`;
@@ -311,8 +154,6 @@ function ProgramDayTab({ dayKey, week, data, setData, weeks }) {
     return null;
   })();
 
-  function copyPrev() { if (prevEntry) { setWeights(prevEntry.weights); } }
-
   useEffect(() => {
     const e = data.workoutLog[logKey]||{};
     setWeights(e.weights||{}); setCardio(e.cardio||""); setSauna(e.sauna||false);
@@ -320,19 +161,36 @@ function ProgramDayTab({ dayKey, week, data, setData, weeks }) {
     setSubs(e.subs||{}); setSwapping(null); setSwapName("");
   }, [logKey]);
 
-  function updateWeight(id, i, val) { setWeights(p=>({...p,[`${id}-${i}`]:val})); }
-
+  function setW(id, i, val) { setWeights(p=>({...p, [`${id}-${i}`]:val})); }
+  function setR(id, i, val) { setWeights(p=>({...p, [`${id}-${i}-reps`]:val})); }
   function confirmSwap(exId) {
     if (!swapName.trim()) return;
     setSubs(p=>({...p,[exId]:swapName.trim()}));
     setSwapping(null); setSwapName("");
   }
-
   function clearSub(exId) { setSubs(p=>{ const n={...p}; delete n[exId]; return n; }); }
 
   function handleSave() {
     const newData = { ...data, workoutLog:{ ...data.workoutLog, [logKey]:{ weights, cardio, sauna, saunaMin, notes, extras, subs, savedAt:new Date().toISOString() } } };
     setData(newData); persist(newData); setSaved(true); setTimeout(()=>setSaved(false),2000);
+  }
+
+  function renderExHeader(ex, subName, isSwapping) {
+    return (
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
+        <div>
+          <div style={{ fontSize:14, fontWeight:"bold", color:"#fff" }}>{subName || ex.name}</div>
+          {subName && <div style={{ fontSize:10, color:"#c4b5fd", marginTop:2 }}>Subbing for: {ex.name}</div>}
+        </div>
+        <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+          {subName && <button onClick={()=>clearSub(ex.id)} style={{ background:"none", border:"none", color:S.muted, fontSize:11, cursor:"pointer" }}>Reset</button>}
+          <button onClick={()=>{ setSwapping(isSwapping?null:ex.id); setSwapName(subName||""); }}
+            style={{ background:"#374151", border:"none", color:"#fff", fontSize:11, borderRadius:6, padding:"4px 10px", cursor:"pointer", fontFamily:"Georgia,serif" }}>
+            {isSwapping ? "Cancel" : "⇄ Sub"}
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -346,76 +204,65 @@ function ProgramDayTab({ dayKey, week, data, setData, weeks }) {
           <span style={{ color:S.muted, fontSize:13 }}>lbs</span>
         </div>
       </Card>
+
       {prevEntry && (
         <Card style={{ background:"rgba(79,70,229,0.06)", border:`1px solid ${S.accent}44` }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
             <Label style={{ marginBottom:0 }}>Last Session ({prevEntry.week})</Label>
-            <Btn small onClick={copyPrev} color="#374151">Copy Weights</Btn>
+            <Btn small onClick={()=>setWeights(prevEntry.weights)} color="#374151">Copy Weights</Btn>
           </div>
           <div style={{ fontSize:11, color:S.muted, lineHeight:1.8 }}>
             {[...day.compound, ...day.isolation].map(ex => {
-              const sets = Array.isArray(ex.reps) ? ex.reps.length : ex.sets;
-              const vals = Array.from({length:sets},(_,i)=>prevEntry.weights[`${ex.id}-${i}`]).filter(Boolean);
-              return vals.length ? <div key={ex.id}>{ex.name}: {vals.map((v,i)=>`Set${i+1} ${v}lbs`).join(" · ")}</div> : null;
+              const setCount = Array.isArray(ex.reps) ? ex.reps.length : ex.sets;
+              const vals = Array.from({length:setCount},(_,i)=>prevEntry.weights[`${ex.id}-${i}`]).filter(Boolean);
+              if (!vals.length) return null;
+              return (
+                <div key={ex.id}>{ex.name}: {vals.map((v,i)=>{
+                  const r = prevEntry.weights[`${ex.id}-${i}-reps`];
+                  return r ? `${v}lbs×${r}` : `${v}lbs`;
+                }).join(" · ")}</div>
+              );
             })}
           </div>
         </Card>
       )}
+
       <Label>Compound Lifts — Pyramid (12/10/8/6)</Label>
+      <div style={{ fontSize:11, color:S.muted, marginBottom:10 }}>Log weight (lbs) and actual reps completed each set</div>
       {day.compound.map(ex=>{
         const subName = subs[ex.id];
-        const displayName = subName || ex.name;
         const isSwapping = swapping === ex.id;
         return (
           <Card key={ex.id} accent={subName ? "#7c3aed55" : `${day.accent}55`}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
-              <div>
-                <div style={{ fontSize:14, fontWeight:"bold", color:"#fff" }}>{displayName}</div>
-                {subName && <div style={{ fontSize:10, color:"#c4b5fd", marginTop:2 }}>Subbing for: {ex.name}</div>}
-              </div>
-              <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-                {subName && <button onClick={()=>clearSub(ex.id)} style={{ background:"none", border:"none", color:S.muted, fontSize:11, cursor:"pointer", padding:"2px 6px" }}>Reset</button>}
-                <button onClick={()=>{ setSwapping(isSwapping?null:ex.id); setSwapName(subName||""); }} style={{ background:"#374151", border:"none", color:"#fff", fontSize:11, borderRadius:6, padding:"4px 10px", cursor:"pointer", fontFamily:"Georgia,serif" }}>
-                  {isSwapping ? "Cancel" : "⇄ Sub"}
-                </button>
-              </div>
-            </div>
+            {renderExHeader(ex, subName, isSwapping)}
             {isSwapping && (
               <div style={{ display:"flex", gap:8, marginBottom:10, alignItems:"center" }}>
                 <Inp value={swapName} onChange={e=>setSwapName(e.target.value)} placeholder="e.g. Dumbbell Press" onKeyDown={e=>e.key==="Enter"&&confirmSwap(ex.id)} style={{ flex:1 }} />
                 <Btn small onClick={()=>confirmSwap(ex.id)} color="#7c3aed">Use This</Btn>
               </div>
             )}
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-              {ex.reps.map((rep,i)=>(
-                <div key={i} style={{ textAlign:"center" }}>
-                  <div style={{ fontSize:10, color:S.muted, marginBottom:4 }}>Set {i+1} · {rep}r</div>
-                  <Inp type="number" placeholder="lbs" value={weights[`${ex.id}-${i}`]||""}
-                    onChange={e=>updateWeight(ex.id,i,e.target.value)}
-                    style={{ width:62, textAlign:"center", padding:"7px 4px", border:`1px solid ${weights[`${ex.id}-${i}`]?day.accent:S.border}` }} />
-                </div>
-              ))}
-            </div>
+            <SetLogger exId={ex.id} setCount={ex.reps.length} targetReps={ex.reps} weights={weights} onWeight={setW} onReps={setR} accent={day.accent} />
           </Card>
         );
       })}
+
       <Label>Isolation — Straight Sets</Label>
       {day.isolation.map(ex=>{
         const subName = subs[ex.id];
-        const displayName = subName || ex.name;
         const isSwapping = swapping === ex.id;
         return (
           <Card key={ex.id} accent={subName ? "#7c3aed55" : S.border}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
               <div>
                 <div style={{ fontSize:14, fontWeight:"bold", color:"#fff" }}>
-                  {displayName} <span style={{ fontSize:11, color:S.muted, fontWeight:"normal" }}>· {ex.sets}×{ex.reps}</span>
+                  {subName || ex.name} <span style={{ fontSize:11, color:S.muted, fontWeight:"normal" }}>· {ex.sets}×{ex.reps}</span>
                 </div>
                 {subName && <div style={{ fontSize:10, color:"#c4b5fd", marginTop:2 }}>Subbing for: {ex.name}</div>}
               </div>
               <div style={{ display:"flex", gap:6 }}>
                 {subName && <button onClick={()=>clearSub(ex.id)} style={{ background:"none", border:"none", color:S.muted, fontSize:11, cursor:"pointer" }}>Reset</button>}
-                <button onClick={()=>{ setSwapping(isSwapping?null:ex.id); setSwapName(subName||""); }} style={{ background:"#374151", border:"none", color:"#fff", fontSize:11, borderRadius:6, padding:"4px 10px", cursor:"pointer", fontFamily:"Georgia,serif" }}>
+                <button onClick={()=>{ setSwapping(isSwapping?null:ex.id); setSwapName(subName||""); }}
+                  style={{ background:"#374151", border:"none", color:"#fff", fontSize:11, borderRadius:6, padding:"4px 10px", cursor:"pointer", fontFamily:"Georgia,serif" }}>
                   {isSwapping ? "Cancel" : "⇄ Sub"}
                 </button>
               </div>
@@ -426,38 +273,35 @@ function ProgramDayTab({ dayKey, week, data, setData, weeks }) {
                 <Btn small onClick={()=>confirmSwap(ex.id)} color="#7c3aed">Use This</Btn>
               </div>
             )}
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-              {Array.from({length:ex.sets},(_,i)=>(
-                <div key={i} style={{ textAlign:"center" }}>
-                  <div style={{ fontSize:10, color:S.muted, marginBottom:4 }}>Set {i+1}</div>
-                  <Inp type="number" placeholder="lbs" value={weights[`${ex.id}-${i}`]||""}
-                    onChange={e=>updateWeight(ex.id,i,e.target.value)}
-                    style={{ width:62, textAlign:"center", padding:"7px 4px", border:`1px solid ${weights[`${ex.id}-${i}`]?"#6366f1":S.border}` }} />
-                </div>
-              ))}
-            </div>
+            <SetLogger exId={ex.id} setCount={ex.sets} targetReps={ex.reps} weights={weights} onWeight={setW} onReps={setR} accent="#6366f1" />
           </Card>
         );
       })}
+
       <Label>Extra Exercises</Label>
       <Card>
         <div style={{ display:"flex", gap:6, marginBottom:8, flexWrap:"wrap" }}>
           <Inp value={newExtra.name} onChange={e=>setNewExtra({...newExtra,name:e.target.value})} placeholder="Exercise" style={{ flex:2, minWidth:100 }} />
           <Inp value={newExtra.sets} onChange={e=>setNewExtra({...newExtra,sets:e.target.value})} placeholder="Sets" style={{ width:52 }} />
-          <Inp value={newExtra.reps} onChange={e=>setNewExtra({...newExtra,reps:e.target.value})} placeholder="Reps" style={{ width:52 }} />
+          <Inp value={newExtra.reps} onChange={e=>setNewExtra({...newExtra,reps:e.target.value})} placeholder="Target reps" style={{ width:80 }} />
           <Btn small onClick={()=>{ if(!newExtra.name)return; setExtras(p=>[...p,{...newExtra,id:Date.now()}]); setNewExtra({name:"",sets:"",reps:""}); }}>+</Btn>
         </div>
         {extras.map(ex=>(
-          <div key={ex.id} style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:`1px solid ${S.border}`, fontSize:13 }}>
-            <span style={{ color:S.text }}>{ex.name} {ex.sets&&`${ex.sets}×${ex.reps}`}</span>
-            <button onClick={()=>setExtras(p=>p.filter(e=>e.id!==ex.id))} style={{ background:"none", border:"none", color:"#ef4444", cursor:"pointer" }}>×</button>
-          </div>
+          <Card key={ex.id} accent={S.border} style={{ marginBottom:8 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+              <span style={{ fontSize:13, color:S.text, fontWeight:"bold" }}>{ex.name} <span style={{ color:S.muted, fontWeight:"normal", fontSize:11 }}>{ex.sets&&`${ex.sets}×${ex.reps}`}</span></span>
+              <button onClick={()=>setExtras(p=>p.filter(e=>e.id!==ex.id))} style={{ background:"none", border:"none", color:"#ef4444", cursor:"pointer", fontSize:16 }}>×</button>
+            </div>
+            <SetLogger exId={ex.id} setCount={parseInt(ex.sets)||3} targetReps={ex.reps} weights={weights} onWeight={setW} onReps={setR} accent="#6366f1" />
+          </Card>
         ))}
       </Card>
+
       <Card>
         <Label>Cardio</Label>
         <Inp value={cardio} onChange={e=>setCardio(e.target.value)} placeholder="e.g. 20 min incline treadmill, HR 138" style={{ width:"100%", boxSizing:"border-box" }} />
       </Card>
+
       <Card accent={sauna?`${S.accent}66`:S.border}>
         <Label>Sauna</Label>
         <div style={{ display:"flex", alignItems:"center", gap:12 }}>
@@ -473,10 +317,12 @@ function ProgramDayTab({ dayKey, week, data, setData, weeks }) {
           )}
         </div>
       </Card>
+
       <Card>
         <Label>Workout Notes</Label>
         <Textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="How did it feel? Any soreness, PRs, energy level..." rows={3} />
       </Card>
+
       <Btn full onClick={handleSave} style={{ padding:"13px", fontSize:15, background:saved?"#16a34a":S.accent }}>
         {saved?"✓ Saved!":"Save Workout"}
       </Btn>
@@ -484,6 +330,7 @@ function ProgramDayTab({ dayKey, week, data, setData, weeks }) {
   );
 }
 
+// ── EXTRA DAY TAB ─────────────────────────────────────────────────────────────
 function ExtraDayTab({ dayDef, week, data, setData, weeks }) {
   const logKey = `${week}-${dayDef.id}`;
   const entry = data.workoutLog[logKey]||{};
@@ -515,7 +362,8 @@ function ExtraDayTab({ dayDef, week, data, setData, weeks }) {
     setExercises(p=>[...p,{ ...newEx, id:Date.now(), sets:parseInt(newEx.sets)||3 }]);
     setNewEx({ name:"", sets:"3", reps:"" });
   }
-  function updateWeight(id,i,val) { setWeights(p=>({...p,[`${id}-${i}`]:val})); }
+  function setW(id,i,val) { setWeights(p=>({...p,[`${id}-${i}`]:val})); }
+  function setR(id,i,val) { setWeights(p=>({...p,[`${id}-${i}-reps`]:val})); }
 
   function handleSave() {
     const nd={...data,workoutLog:{...data.workoutLog,[logKey]:{ exercises,weights,cardio,sauna,saunaMin,notes,savedAt:new Date().toISOString() }}};
@@ -534,7 +382,7 @@ function ExtraDayTab({ dayDef, week, data, setData, weeks }) {
           <div style={{ fontSize:11, color:S.muted, lineHeight:1.8 }}>
             {prevEntry.exercises.map(ex=>{
               const vals=Array.from({length:ex.sets},(_,i)=>prevEntry.weights[`${ex.id}-${i}`]).filter(Boolean);
-              return <div key={ex.id}>{ex.name}: {vals.length?vals.map((v,i)=>`Set${i+1} ${v}lbs`).join(" · "):`${ex.sets}×${ex.reps}`}</div>;
+              return <div key={ex.id}>{ex.name}: {vals.length ? vals.map((v,i)=>{ const r=prevEntry.weights[`${ex.id}-${i}-reps`]; return r?`${v}lbs×${r}`:`${v}lbs`; }).join(" · ") : `${ex.sets}×${ex.reps}`}</div>;
             })}
           </div>
         </Card>
@@ -544,7 +392,7 @@ function ExtraDayTab({ dayDef, week, data, setData, weeks }) {
         <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 }}>
           <Inp value={newEx.name} onChange={e=>setNewEx({...newEx,name:e.target.value})} placeholder="Exercise name" style={{ flex:2, minWidth:120 }} />
           <Inp type="number" value={newEx.sets} onChange={e=>setNewEx({...newEx,sets:e.target.value})} placeholder="Sets" style={{ width:52 }} />
-          <Inp value={newEx.reps} onChange={e=>setNewEx({...newEx,reps:e.target.value})} placeholder="Reps" style={{ width:70 }} />
+          <Inp value={newEx.reps} onChange={e=>setNewEx({...newEx,reps:e.target.value})} placeholder="Target reps" style={{ width:90 }} />
           <Btn small onClick={addEx}>+ Add</Btn>
         </div>
       </Card>
@@ -553,23 +401,17 @@ function ExtraDayTab({ dayDef, week, data, setData, weeks }) {
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
             <div>
               <div style={{ fontSize:14, fontWeight:"bold", color:S.text }}>{ex.name}</div>
-              <div style={{ fontSize:11, color:S.muted }}>{ex.sets} sets{ex.reps&&` × ${ex.reps}`}</div>
+              <div style={{ fontSize:11, color:S.muted }}>{ex.sets} sets{ex.reps&&` × ${ex.reps} (target)`}</div>
             </div>
             <button onClick={()=>setExercises(p=>p.filter(e=>e.id!==ex.id))} style={{ background:"none", border:"none", color:"#ef4444", fontSize:18, cursor:"pointer" }}>×</button>
           </div>
-          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-            {Array.from({length:ex.sets||3},(_,i)=>(
-              <div key={i} style={{ textAlign:"center" }}>
-                <div style={{ fontSize:10, color:S.muted, marginBottom:4 }}>Set {i+1}</div>
-                <Inp type="number" placeholder="lbs" value={weights[`${ex.id}-${i}`]||""}
-                  onChange={e=>updateWeight(ex.id,i,e.target.value)}
-                  style={{ width:62, textAlign:"center", padding:"7px 4px", border:`1px solid ${weights[`${ex.id}-${i}`]?dayDef.accent:S.border}` }} />
-              </div>
-            ))}
-          </div>
+          <SetLogger exId={ex.id} setCount={ex.sets||3} targetReps={null} weights={weights} onWeight={setW} onReps={setR} accent={dayDef.accent} />
         </Card>
       ))}
-      <Card><Label>Cardio / Notes</Label><Inp value={cardio} onChange={e=>setCardio(e.target.value)} placeholder="e.g. 30 min run" style={{ width:"100%", boxSizing:"border-box" }} /></Card>
+      <Card>
+        <Label>Cardio</Label>
+        <Inp value={cardio} onChange={e=>setCardio(e.target.value)} placeholder="e.g. 30 min run" style={{ width:"100%", boxSizing:"border-box" }} />
+      </Card>
       <Card accent={sauna?`${S.accent}66`:S.border}>
         <Label>Sauna</Label>
         <div style={{ display:"flex", alignItems:"center", gap:12 }}>
@@ -588,10 +430,10 @@ function ExtraDayTab({ dayDef, week, data, setData, weeks }) {
   );
 }
 
+// ── HISTORY TAB ───────────────────────────────────────────────────────────────
 function HistoryTab({ data, weeks }) {
   const [filterDay, setFilterDay] = useState("all");
   const allDayKeys = [...Object.keys(PROGRAM_DAYS), ...(data.extraDays||[]).map(d=>d.id)];
-
   const allEntries = [];
   weeks.forEach(w => {
     allDayKeys.forEach(dk => {
@@ -603,8 +445,12 @@ function HistoryTab({ data, weeks }) {
       allEntries.push({ week:w, dayKey:dk, dayDef, entry, key });
     });
   });
-
   const filtered = filterDay==="all" ? allEntries : allEntries.filter(e=>e.dayKey===filterDay);
+
+  function formatSets(exId, setCount, w) {
+    const vals = Array.from({length:setCount},(_,i)=>w[`${exId}-${i}`]).filter(Boolean);
+    return vals.map((v,i) => { const r=w[`${exId}-${i}-reps`]; return r?`${v}×${r}`:`${v}lbs`; }).join(" → ");
+  }
 
   return (
     <div>
@@ -624,16 +470,16 @@ function HistoryTab({ data, weeks }) {
               <div style={{ fontSize:14, fontWeight:"bold", color:dayDef.accent }}>{dayDef.label || dayDef.fullLabel}</div>
               <div style={{ fontSize:11, color:S.muted }}>{week}</div>
             </div>
-            {entry.sauna && <span style={{ fontSize:11, color:S.accentLight }}>🧖 Sauna {entry.saunaMin&&`${entry.saunaMin}min`}</span>}
+            {entry.sauna && <span style={{ fontSize:11, color:S.accentLight }}>🧖 {entry.saunaMin&&`${entry.saunaMin}min`}</span>}
           </div>
           {PROGRAM_DAYS[dayDef.id||""] && [...(PROGRAM_DAYS[dayDef.id]?.compound||[]), ...(PROGRAM_DAYS[dayDef.id]?.isolation||[])].map(ex=>{
-            const sets=Array.isArray(ex.reps)?ex.reps.length:ex.sets;
-            const vals=Array.from({length:sets},(_,i)=>entry.weights?.[`${ex.id}-${i}`]).filter(Boolean);
-            return vals.length?<div key={ex.id} style={{ fontSize:12, color:S.text, marginBottom:4 }}><span style={{ color:S.muted }}>{ex.name}:</span> {vals.map((v)=>`${v}lbs`).join(" → ")}</div>:null;
+            const setCount = Array.isArray(ex.reps) ? ex.reps.length : ex.sets;
+            const str = formatSets(ex.id, setCount, entry.weights||{});
+            return str ? <div key={ex.id} style={{ fontSize:12, color:S.text, marginBottom:4 }}><span style={{ color:S.muted }}>{ex.name}:</span> {str}</div> : null;
           })}
           {(entry.exercises||[]).map(ex=>{
-            const vals=Array.from({length:ex.sets||3},(_,i)=>entry.weights?.[`${ex.id}-${i}`]).filter(Boolean);
-            return <div key={ex.id} style={{ fontSize:12, color:S.text, marginBottom:4 }}><span style={{ color:S.muted }}>{ex.name}:</span> {vals.length?vals.map(v=>`${v}lbs`).join(" → "):`${ex.sets}×${ex.reps}`}</div>;
+            const str = formatSets(ex.id, ex.sets||3, entry.weights||{});
+            return <div key={ex.id} style={{ fontSize:12, color:S.text, marginBottom:4 }}><span style={{ color:S.muted }}>{ex.name}:</span> {str || `${ex.sets}×${ex.reps}`}</div>;
           })}
           {entry.cardio && <div style={{ fontSize:12, color:"#10b981", marginTop:4 }}>🏃 {entry.cardio}</div>}
           {entry.notes && <div style={{ fontSize:12, color:S.muted, marginTop:6, fontStyle:"italic" }}>"{entry.notes}"</div>}
@@ -643,6 +489,7 @@ function HistoryTab({ data, weeks }) {
   );
 }
 
+// ── PROGRESS TAB ──────────────────────────────────────────────────────────────
 function ProgressTab({ data, setData, weeks }) {
   const [showMeasurements, setShowMeasurements] = useState(false);
   const [measWeek, setMeasWeek] = useState("Week 1");
@@ -661,12 +508,6 @@ function ProgressTab({ data, setData, weeks }) {
   const workoutsLogged = Object.keys(data.workoutLog).length;
   const saunaCount = Object.values(data.workoutLog).filter(e=>e.sauna).length;
 
-  const dietDays = Object.keys(data.dietLog||{});
-  const proteinHits = dietDays.filter(d=>{
-    const tot=(data.dietLog[d]?.meals||[]).reduce((a,m)=>a+(m.protein||0),0);
-    return tot>=PROTEIN_TARGET*0.9;
-  }).length;
-
   return (
     <div>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
@@ -676,7 +517,6 @@ function ProgressTab({ data, setData, weeks }) {
           { label:"Total Lost", value:totalLost?`${totalLost} lbs`:"—", hi:true },
           { label:"Workouts Logged", value:`${workoutsLogged}`, sub:"sessions" },
           { label:"Sauna Sessions", value:`${saunaCount}`, sub:"sessions" },
-          { label:"Protein Goals Hit", value:`${proteinHits}`, sub:`of ${dietDays.length} days` },
         ].map(s=>(
           <Card key={s.label} accent={s.hi?S.accent:S.border} style={{ textAlign:"center", marginBottom:0 }}>
             <div style={{ fontSize:9, color:S.muted, letterSpacing:1, textTransform:"uppercase", marginBottom:5 }}>{s.label}</div>
@@ -753,36 +593,17 @@ function ProgressTab({ data, setData, weeks }) {
         </div>
         <div style={{ marginTop:10, fontSize:13, color:S.accentLight }}>{workoutsLogged} sessions logged</div>
       </Card>
-      <Card>
-        <Label>Diet Log Summary</Label>
-        {dietDays.length===0?<div style={{ color:S.muted, fontSize:13 }}>No diet data yet.</div>:
-          dietDays.sort().map(date=>{
-            const meals=data.dietLog[date]?.meals||[];
-            const water=data.dietLog[date]?.water||0;
-            const tot=meals.reduce((a,m)=>({cal:a.cal+(m.calories||0),pro:a.pro+(m.protein||0)}),{cal:0,pro:0});
-            return (
-              <div key={date} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"7px 0", borderBottom:`1px solid ${S.border}` }}>
-                <span style={{ fontSize:12, color:S.text }}>{date}</span>
-                <div style={{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end" }}>
-                  <span style={{ fontSize:11, color:tot.cal<=CALORIE_TARGET+100?"#10b981":"#ef4444" }}>{Math.round(tot.cal)} kcal</span>
-                  <span style={{ fontSize:11, color:tot.pro>=PROTEIN_TARGET*0.9?"#10b981":"#f59e0b" }}>{Math.round(tot.pro)}g P</span>
-                  <span style={{ fontSize:11, color:water>=WATER_TARGET?"#0891b2":S.muted }}>💧{water}oz</span>
-                </div>
-              </div>
-            );
-          })
-        }
-      </Card>
     </div>
   );
 }
 
+// ── CHECK-IN ──────────────────────────────────────────────────────────────────
 function CheckInTab({ data, setData, weeks }) {
   const [week, setWeek] = useState("Week 1");
-  const [form, setForm] = useState({ energy:"", soreness:"", diet:"", sleep:"", stress:"", notes:"" });
+  const [form, setForm] = useState({ energy:"", soreness:"", sleep:"", stress:"", notes:"" });
   const [saved, setSaved] = useState(false);
 
-  useEffect(()=>{ setForm(data.checkIns?.[week]||{ energy:"", soreness:"", diet:"", sleep:"", stress:"", notes:"" }); }, [week]);
+  useEffect(()=>{ setForm(data.checkIns?.[week]||{ energy:"", soreness:"", sleep:"", stress:"", notes:"" }); }, [week]);
 
   function handleSave() {
     const nd={...data,checkIns:{...data.checkIns,[week]:form}};
@@ -792,7 +613,6 @@ function CheckInTab({ data, setData, weeks }) {
   const questions = [
     { key:"energy", label:"How was your energy this week?", opts:["Very low","Low","Average","Good","Great"] },
     { key:"soreness", label:"Overall soreness / recovery?", opts:["Very sore","Somewhat sore","Mild","Recovered","100%"] },
-    { key:"diet", label:"How well did you stick to the diet?", opts:["Poorly","Somewhat","Pretty good","Very good","Perfect"] },
     { key:"sleep", label:"Sleep quality?", opts:["Poor","Below avg","Average","Good","Excellent"] },
     { key:"stress", label:"Stress level?", opts:["Very high","High","Moderate","Low","Very low"] },
   ];
@@ -806,9 +626,7 @@ function CheckInTab({ data, setData, weeks }) {
         </select>
       </div>
       <Card style={{ background:"rgba(79,70,229,0.08)", border:`1px solid ${S.accent}44` }}>
-        <div style={{ fontSize:12, color:S.accentLight, lineHeight:1.6 }}>
-          Fill this out at the end of each week. It helps your trainer give you better, more specific feedback.
-        </div>
+        <div style={{ fontSize:12, color:S.accentLight, lineHeight:1.6 }}>Fill this out at the end of each week to get better trainer feedback.</div>
       </Card>
       {questions.map(q=>(
         <Card key={q.key}>
@@ -818,7 +636,7 @@ function CheckInTab({ data, setData, weeks }) {
               <button key={opt} onClick={()=>setForm(f=>({...f,[q.key]:opt}))} style={{
                 padding:"7px 12px", borderRadius:8, border:"none", cursor:"pointer", fontSize:12,
                 fontFamily:"Georgia,serif", background:form[q.key]===opt?S.accent:"#1e1e3a",
-                color:form[q.key]===opt?"#fff":S.muted, transition:"background 0.15s",
+                color:form[q.key]===opt?"#fff":S.muted,
               }}>{opt}</button>
             ))}
           </div>
@@ -826,7 +644,7 @@ function CheckInTab({ data, setData, weeks }) {
       ))}
       <Card>
         <Label>Anything else your trainer should know?</Label>
-        <Textarea value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Injuries, life stress, travel, diet slip-ups, wins..." />
+        <Textarea value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Injuries, life stress, travel, wins..." />
       </Card>
       <Btn full onClick={handleSave} style={{ padding:"13px", fontSize:15, background:saved?"#16a34a":S.accent }}>
         {saved?"✓ Saved!":"Submit Check-In"}
@@ -840,7 +658,7 @@ function CheckInTab({ data, setData, weeks }) {
               <Card key={w}>
                 <div style={{ fontSize:13, fontWeight:"bold", color:S.accentLight, marginBottom:8 }}>{w}</div>
                 <div style={{ display:"flex", flexWrap:"wrap", gap:"4px 16px" }}>
-                  {[["Energy",c.energy],["Soreness",c.soreness],["Diet",c.diet],["Sleep",c.sleep],["Stress",c.stress]].filter(([,v])=>v).map(([k,v])=>(
+                  {[["Energy",c.energy],["Soreness",c.soreness],["Sleep",c.sleep],["Stress",c.stress]].filter(([,v])=>v).map(([k,v])=>(
                     <span key={k} style={{ fontSize:12 }}><span style={{ color:S.muted }}>{k}:</span> {v}</span>
                   ))}
                 </div>
@@ -854,9 +672,9 @@ function CheckInTab({ data, setData, weeks }) {
   );
 }
 
+// ── FEEDBACK ──────────────────────────────────────────────────────────────────
 function FeedbackTab({ data, weeks }) {
-  const [aiFeedback, setAiFeedback] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   function buildSummary() {
     const lines = ["=== WEIGHT ==="];
@@ -870,80 +688,65 @@ function FeedbackTab({ data, weeks }) {
         lines.push(`\n${w} - ${dayDef?.label||dk}:`);
         if(PROGRAM_DAYS[dk]) {
           [...PROGRAM_DAYS[dk].compound,...PROGRAM_DAYS[dk].isolation].forEach(ex=>{
-            const sets=Array.isArray(ex.reps)?ex.reps.length:ex.sets;
-            const vals=Array.from({length:sets},(_,i)=>entry.weights?.[`${ex.id}-${i}`]).filter(Boolean);
-            if(vals.length) lines.push(`  ${ex.name}: ${vals.map(v=>`${v}lbs`).join(", ")}`);
+            const setCount=Array.isArray(ex.reps)?ex.reps.length:ex.sets;
+            const vals=Array.from({length:setCount},(_,i)=>entry.weights?.[`${ex.id}-${i}`]).filter(Boolean);
+            if(vals.length) lines.push(`  ${ex.name}: ${vals.map((v,i)=>{ const r=entry.weights?.[`${ex.id}-${i}-reps`]; return r?`${v}lbs×${r}reps`:`${v}lbs`; }).join(", ")}`);
           });
         }
         (entry.exercises||[]).forEach(ex=>{
           const vals=Array.from({length:ex.sets||3},(_,i)=>entry.weights?.[`${ex.id}-${i}`]).filter(Boolean);
-          lines.push(`  ${ex.name} ${ex.sets}×${ex.reps}${vals.length?`: ${vals.join(", ")}`:"" }`);
+          lines.push(`  ${ex.name}: ${vals.length?vals.map((v,i)=>{ const r=entry.weights?.[`${ex.id}-${i}-reps`]; return r?`${v}lbs×${r}reps`:`${v}lbs`; }).join(", "):`${ex.sets}×${ex.reps}`}`);
         });
         if(entry.cardio) lines.push(`  Cardio: ${entry.cardio}`);
         if(entry.sauna) lines.push(`  Sauna: ${entry.saunaMin||"?"}min`);
         if(entry.notes) lines.push(`  Notes: "${entry.notes}"`);
       });
     });
-    lines.push("\n=== DIET (recent) ===");
-    Object.keys(data.dietLog||{}).sort().slice(-7).forEach(date=>{
-      const meals=data.dietLog[date]?.meals||[], water=data.dietLog[date]?.water||0;
-      const tot=meals.reduce((a,m)=>({cal:a.cal+(m.calories||0),pro:a.pro+(m.protein||0)}),{cal:0,pro:0});
-      lines.push(`${date}: ${Math.round(tot.cal)} kcal, ${Math.round(tot.pro)}g protein, ${water}oz water`);
-    });
     lines.push("\n=== MEASUREMENTS ===");
     weeks.filter(w=>data.measurements?.[w]).forEach(w=>{
       const m=data.measurements[w];
       lines.push(`${w}: Waist ${m.waist||"?"}in, Hips ${m.hips||"?"}in, Chest ${m.chest||"?"}in, Arms ${m.arms||"?"}in`);
     });
-    lines.push("\n=== WEEKLY CHECK-INS ===");
+    lines.push("\n=== CHECK-INS ===");
     weeks.filter(w=>data.checkIns?.[w]?.energy).forEach(w=>{
       const c=data.checkIns[w];
-      lines.push(`${w}: Energy=${c.energy}, Soreness=${c.soreness}, Diet=${c.diet}, Sleep=${c.sleep}, Stress=${c.stress}${c.notes?`, Notes: "${c.notes}"`:"" }`);
+      lines.push(`${w}: Energy=${c.energy}, Soreness=${c.soreness}, Sleep=${c.sleep}, Stress=${c.stress}${c.notes?`, Notes: "${c.notes}"`:""}`);
     });
     return lines.join("\n") || "No data yet.";
   }
 
-  async function getFeedback() {
-    setLoading(true); setAiFeedback("");
-    const prompt = `You are a personal trainer reviewing your client's fitness program data. Here's everything:\n\n${buildSummary()}\n\nClient profile: 6'2", started ~205 lbs, above average strength, training 3x/week (Push/Pull/Full Body) + any extra sessions logged. Goal: lose fat especially lower midsection and hips, look great at a wedding. Program: pyramid reps (12,10,8,6) on compounds, straight sets on isolation, 15-20 min cardio post-workout, sauna after sessions, creatine daily, targeting 2200 kcal/day and 190g protein, 1 gallon water/day.\n\nGive direct, specific, motivating trainer feedback. Reference actual numbers from their data. Comment on: weight trend, workout consistency including sauna, diet adherence, water intake, measurements if available, and anything from their check-ins. End with 2-3 specific action items for next week. Sound like a real trainer who knows this client well. 6-8 sentences.`;
-    try {
-      const res = await fetch("/api/claude",{
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ max_tokens:1000, messages:[{role:"user",content:prompt}] })
-      });
-      const result = await res.json();
-      setAiFeedback(result.content?.map(c=>c.text||"").join("")||"No feedback.");
-    } catch { setAiFeedback("Couldn't load feedback. Try again."); }
-    setLoading(false);
+  function copyToClipboard() {
+    const text = `Here's my fitness tracker data — can you give me trainer feedback?\n\n${buildSummary()}`;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 3000);
+    });
   }
 
   return (
     <div>
-      <Card>
-        <Label>Trainer Check-In</Label>
-        <p style={{ fontSize:13, color:"#aaa", lineHeight:1.6, margin:"0 0 14px" }}>
-          For the best feedback: log your workouts, weight, diet, and complete your weekly check-in first. I'll analyze everything.
-        </p>
-        <Btn full onClick={getFeedback} disabled={loading}>
-          {loading?"Analyzing your progress...":"Get Trainer Feedback"}
-        </Btn>
+      <Card style={{ background:"rgba(79,70,229,0.08)", border:`1px solid ${S.accent}44` }}>
+        <Label>How to get trainer feedback</Label>
+        <div style={{ fontSize:13, color:S.accentLight, lineHeight:2 }}>
+          1. Click <strong>"Copy My Data"</strong> below<br/>
+          2. Open <strong>Claude.ai</strong> → your Fitness Tracker project<br/>
+          3. Paste into the chat — I'll analyze everything and respond
+        </div>
       </Card>
-      {aiFeedback && (
-        <Card accent={S.accent} style={{ background:"rgba(79,70,229,0.1)" }}>
-          <Label>Your Trainer Says</Label>
-          <p style={{ fontSize:15, color:S.text, lineHeight:1.8, margin:0 }}>{aiFeedback}</p>
-        </Card>
-      )}
       <Card>
-        <Label>Data on File</Label>
-        <pre style={{ fontSize:10, color:"#6666aa", whiteSpace:"pre-wrap", fontFamily:"monospace", margin:0, lineHeight:1.5, maxHeight:200, overflowY:"auto" }}>
+        <Label>Your Progress Data</Label>
+        <pre style={{ fontSize:10, color:"#6666aa", whiteSpace:"pre-wrap", fontFamily:"monospace", margin:"0 0 14px", lineHeight:1.5, maxHeight:300, overflowY:"auto" }}>
           {buildSummary()}
         </pre>
+        <Btn full onClick={copyToClipboard} color={copied ? S.green : S.accent}>
+          {copied ? "✓ Copied! Paste it into Claude." : "Copy My Data"}
+        </Btn>
       </Card>
     </div>
   );
 }
 
+// ── ROOT ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [data, setData] = useState(load);
   const [tab, setTab] = useState("log");
@@ -962,7 +765,6 @@ export default function App() {
     setData(nd); persist(nd);
     if (!getWeeks(n).includes(week)) setWeek(`Week ${n}`);
   }
-
   function addExtraDay() {
     if (!newDayName.trim()) return;
     const id = `extra_${Date.now()}`;
@@ -971,13 +773,11 @@ export default function App() {
     setData(newData); persist(newData);
     setWorkoutTab(id); setNewDayName(""); setShowAddDay(false);
   }
-
   function removeExtraDay(id) {
     const newData = { ...data, extraDays:extraDays.filter(d=>d.id!==id) };
     setData(newData); persist(newData);
     if (workoutTab===id) setWorkoutTab("push");
   }
-
   function exportData() {
     const blob = new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
     const url = URL.createObjectURL(blob);
@@ -993,7 +793,6 @@ export default function App() {
 
   const TOP_TABS = [
     { id:"log", label:"Log" },
-    { id:"diet", label:"Diet" },
     { id:"history", label:"History" },
     { id:"progress", label:"Progress" },
     { id:"checkin", label:"Check-In" },
@@ -1018,9 +817,8 @@ export default function App() {
           <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
             {TOP_TABS.map(t=>(
               <button key={t.id} onClick={()=>setTab(t.id)} style={{
-                padding:"5px 13px", borderRadius:18, border:"none", cursor:"pointer",
-                fontSize:11, fontFamily:"Georgia,serif",
-                background:tab===t.id?S.accent:"rgba(255,255,255,0.08)",
+                padding:"5px 13px", borderRadius:18, border:"none", cursor:"pointer", fontSize:11,
+                fontFamily:"Georgia,serif", background:tab===t.id?S.accent:"rgba(255,255,255,0.08)",
                 color:tab===t.id?"#fff":"#aaa", fontWeight:tab===t.id?"bold":"normal",
               }}>{t.label}</button>
             ))}
@@ -1036,9 +834,9 @@ export default function App() {
                 {weeks.map(w=><option key={w}>{w}</option>)}
               </select>
               <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                <button onClick={()=>setWeekCount(weekCount-1)} disabled={weekCount<=1} style={{ width:28, height:28, borderRadius:6, border:`1px solid ${S.border}`, background:"#1e1e3a", color:S.muted, cursor:weekCount<=1?"not-allowed":"pointer", fontSize:16, fontFamily:"Georgia,serif" }}>−</button>
+                <button onClick={()=>setWeekCount(weekCount-1)} disabled={weekCount<=1} style={{ width:28, height:28, borderRadius:6, border:`1px solid ${S.border}`, background:"#1e1e3a", color:S.muted, cursor:weekCount<=1?"not-allowed":"pointer", fontSize:16 }}>−</button>
                 <span style={{ fontSize:11, color:S.muted, whiteSpace:"nowrap" }}>{weekCount} wks</span>
-                <button onClick={()=>setWeekCount(weekCount+1)} style={{ width:28, height:28, borderRadius:6, border:`1px solid ${S.border}`, background:"#1e1e3a", color:S.accentLight, cursor:"pointer", fontSize:16, fontFamily:"Georgia,serif" }}>+</button>
+                <button onClick={()=>setWeekCount(weekCount+1)} style={{ width:28, height:28, borderRadius:6, border:`1px solid ${S.border}`, background:"#1e1e3a", color:S.accentLight, cursor:"pointer", fontSize:16 }}>+</button>
               </div>
             </div>
             <div style={{ display:"flex", gap:5, flexWrap:"wrap", marginBottom:16, alignItems:"center" }}>
@@ -1056,7 +854,6 @@ export default function App() {
                     padding:"7px 13px", borderRadius:"8px 0 0 8px", border:workoutTab===d.id?"none":`1px solid ${S.border}`,
                     cursor:"pointer", fontSize:12, fontFamily:"Georgia,serif",
                     background:workoutTab===d.id?d.accent:"#1e1e3a", color:"#fff",
-                    fontWeight:workoutTab===d.id?"bold":"normal",
                   }}>{d.label}</button>
                   <button onClick={()=>removeExtraDay(d.id)} style={{ padding:"7px 8px", borderRadius:"0 8px 8px 0", border:`1px solid ${S.border}`, background:"#1e1e3a", color:"#ef4444", cursor:"pointer", fontSize:13 }}>×</button>
                 </div>
@@ -1078,7 +875,6 @@ export default function App() {
             }
           </div>
         )}
-        {tab==="diet" && <DietTab data={data} setData={setData} />}
         {tab==="history" && <HistoryTab data={data} weeks={weeks} />}
         {tab==="progress" && <ProgressTab data={data} setData={setData} weeks={weeks} />}
         {tab==="checkin" && <CheckInTab data={data} setData={setData} weeks={weeks} />}
